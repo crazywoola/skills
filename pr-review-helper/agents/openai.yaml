@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Review Helper"
+  short_description: "Review plugin PRs and submit GH reviews"
+  default_prompt: "Review Dify plugin PRs following the guidelines in SKILL.md"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dify Issue Moderator"
+  short_description: "Moderate Dify issues with gh CLI rules"
+  default_prompt: "Use $dify-issue-moderator to review a Dify issue with gh and close it with a polite standard comment when it violates moderation rules."
