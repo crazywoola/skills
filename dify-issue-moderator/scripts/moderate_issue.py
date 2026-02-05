@@ -14,9 +14,13 @@ from typing import Iterable, Sequence
 
 PLUGIN_REPOS = {"langgenius/dify-plugins", "langgenius/dify-official-plugins"}
 CORE_REPO = "langgenius/dify"
-SUPPORTED_REPOS = PLUGIN_REPOS | {CORE_REPO}
+WEBAPP_REPOS = {"langgenius/webapp-conversation", "langgenius/webapp-text-generator"}
+CORE_LIKE_REPOS = {CORE_REPO} | WEBAPP_REPOS
+SUPPORTED_REPOS = PLUGIN_REPOS | CORE_LIKE_REPOS
 SKIP_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"}
 CJK_RATIO_THRESHOLD = 0.20
+MIN_DIFY_VERSION = (1, 10, 0)
+MIN_DIFY_VERSION_STR = "1.10.0"
 
 FORUM_URL = "https://forum.dify.ai/"
 DISCORD_URL = "https://discord.com/invite/FngNHpbcY7"
@@ -42,6 +46,9 @@ ALLOWED_SELF_CHECKS_CJK_SNIPPETS = (
     "我已阅读并同意",
     "请务必使用英文提交 Issue，否则会被关闭。谢谢！:)",
 )
+DIFY_VERSION_LINE_RE = re.compile(r"\bdify\s*version\b", re.IGNORECASE)
+DIFY_VERSION_INLINE_RE = re.compile(r"\bdify\s*v?(\d+)\.(\d+)(?:\.(\d+))?\b", re.IGNORECASE)
+SEMVER_RE = re.compile(r"\bv?(\d+)\.(\d+)(?:\.(\d+))?\b")
 QUESTION_START_RE = re.compile(
     r"^\s*(how|what|why|can|could|is|are|do|does|did|where|when|which|who|whom|help)\b",
     re.IGNORECASE,
@@ -204,6 +211,28 @@ def sanitize_body_for_cjk(body: str) -> str:
         sanitized.append(line)
 
     return "\n".join(sanitized)
+
+
+def parse_semver(text: str) -> tuple[int, int, int] | None:
+    match = SEMVER_RE.search(text)
+    if not match:
+        return None
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch or 0)
+
+
+def extract_dify_version(body: str) -> tuple[int, int, int] | None:
+    if not body:
+        return None
+    for line in body.splitlines():
+        if DIFY_VERSION_LINE_RE.search(line):
+            version = parse_semver(line)
+            if version:
+                return version
+    match = DIFY_VERSION_INLINE_RE.search(body)
+    if match:
+        return int(match.group(1)), int(match.group(2)), int(match.group(3) or 0)
+    return None
 
 
 def language_check_text(issue: IssueData) -> str:
@@ -419,13 +448,29 @@ def render_comment(issue: IssueData, category: str, reasons: list[str]) -> str:
             """
         ).strip()
 
+    if category == "outdated-version":
+        return textwrap.dedent(
+            f"""\
+            Hi @{author}, thanks for opening this issue.
+
+            ### Why this is being closed
+            This report targets an outdated Dify version.
+            {reason_lines if reason_lines else f"- Reported Dify version is below v{MIN_DIFY_VERSION_STR}."}
+
+            ### Next steps
+            Please upgrade to the latest Dify release and retest. If the issue still occurs on the latest version, open a new issue with updated details.
+
+            Thanks for understanding and for supporting Dify.
+            """
+        ).strip()
+
     if category == "core-standards":
         return textwrap.dedent(
             f"""\
             Hi @{author}, thanks for opening this issue.
 
             ### Why this is being closed
-            This report does not yet meet the required issue standard for `langgenius/dify`.
+            This report does not yet meet the required issue standard for `{issue.repo}`.
             {reason_lines if reason_lines else "- Required issue details are missing."}
 
             ### Relevant guidelines
@@ -494,7 +539,7 @@ def decide(issue: IssueData) -> Decision:
             reasons=["Issue appears actionable and follows repository moderation rules."],
         )
 
-    if issue.linked_prs:
+    if issue.repo in CORE_LIKE_REPOS and issue.linked_prs:
         reasons = [f"Issue has {len(issue.linked_prs)} linked PR(s); skip review per policy."]
         return Decision(
             action="skip",
@@ -503,7 +548,7 @@ def decide(issue: IssueData) -> Decision:
         )
 
     association = issue.author_association.upper()
-    if association in SKIP_ASSOCIATIONS:
+    if issue.repo in CORE_LIKE_REPOS and association in SKIP_ASSOCIATIONS:
         return Decision(
             action="skip",
             category="trusted-author",
@@ -527,6 +572,20 @@ def decide(issue: IssueData) -> Decision:
             reasons=reasons,
             comment=render_comment(issue, "question", reasons),
         )
+
+    if issue.repo == CORE_REPO:
+        reported_version = extract_dify_version(issue.body)
+        if reported_version and reported_version < MIN_DIFY_VERSION:
+            version_str = ".".join(str(part) for part in reported_version)
+            reasons = [
+                f"Reported Dify version is v{version_str}, which is below v{MIN_DIFY_VERSION_STR}."
+            ]
+            return Decision(
+                action="close",
+                category="outdated-version",
+                reasons=reasons,
+                comment=render_comment(issue, "outdated-version", reasons),
+            )
 
     violations = core_standard_violations(issue)
     if violations:

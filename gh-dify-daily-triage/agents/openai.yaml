@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dify Daily GH Triage"
+  short_description: "Daily Dify GitHub issues/PRs triage"
+  default_prompt: "Use $gh-dify-daily-triage to list today's open issues and PRs in Dify repos with link checks and attention notes."

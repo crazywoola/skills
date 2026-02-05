@@ -8,6 +8,9 @@ description: Review Dify plugin pull requests end-to-end. Use when asked to read
 ## Overview
 Run deterministic PR review checks for `langgenius/dify-plugins` and submit the final review through `gh`.
 Output local check results in readable markdown sections/tables.
+Always include a summary markdown table in your response to the user with columns: `issue link | decision`.
+If no issue link is available, use the PR link and note it in the analysis.
+Use emoji to represent status (for example, `✅ pass` and `❌ no pass`) and keep all output GitHub-flavored Markdown so it renders correctly on GitHub.
 
 ## Scope Guardrails
 - Skip this skill when the task is **issue moderation** (not PR review).
@@ -26,6 +29,8 @@ Output local check results in readable markdown sections/tables.
 9. Submit review with `gh pr review`:
    - Approve with `LGTM` only when all checks pass.
    - Request changes with highlighted markdown sections and tables otherwise.
+10. In the review comment to the plugin author, include a compact status table listing each check/action with an emoji + `pass`/`no pass` status and a `required action` column, followed by a clear `Next steps` section.
+11. In your response to the user, include the required summary table and a short analysis (2-4 sentences) explaining the decision and any notable failures. Use emoji in the decision/status cell and ensure GitHub-flavored Markdown rendering (proper table headers and separators, no raw HTML).
 
 ## Commands
 Use this as the default command:
@@ -59,9 +64,11 @@ Approve only if all of these pass:
 When any check fails:
 
 1. Use `REQUEST_CHANGES`.
-2. Format the review comment using markdown headings and status tables.
+2. Format the review comment using markdown headings and a status table.
 3. Include each failed check with concrete details and an action request to update and push fixes.
 4. When `README.md` fails language check, include this doc link in the review comment: `https://docs.dify.ai/en/develop-plugin/features-and-specs/plugin-types/multilingual-readme#multilingual-readme`.
+5. Ensure the status table uses `pass`/`no pass` and includes a `required action` column plus a `Next steps` section.
+   - Status cells must include emoji (for example, `✅ pass` or `❌ no pass`) while retaining the text.
 
 ## Prerequisites
 Run in a repo clone with:

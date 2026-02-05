@@ -45,7 +45,8 @@ For other authors, close with a polite comment when any of the following applies
      - `I confirm that I am using English to submit this report (我已阅读并同意 Language Policy).`
      - `[FOR CHINESE USERS] 请务必使用英文提交 Issue，否则会被关闭。谢谢！:)`
 2. Question-style issue (not actionable bug/task report).
-3. Missing essential issue quality information.
+3. Reported Dify version in the description is below `v1.10.0`. Ask the reporter to upgrade to the latest release and retest.
+4. Missing essential issue quality information.
 
 Do not close feature requests that match these accepted patterns (even if they do not contain explicit "use case" keywords):
 - Feature request template is filled with a substantive story under the "Is this request related to a challenge you're experiencing?" section (not `_No response_`).
@@ -74,3 +75,12 @@ Every close comment should:
 - Use short sections (`### Why this is being closed`, `### Next steps`)
 - Explain exactly what is missing/wrong in neutral language
 - Provide actionable next steps and destination links when needed
+
+## Get Your Hands Dirty
+Want to dive in and contribute? Here is how to get started:
+
+- Read the contributing guide: https://github.com/langgenius/dify/blob/main/CONTRIBUTING.md
+- Browse good first issues: https://github.com/langgenius/dify/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22
+- Add a new model runtime or tool by opening a PR in: https://github.com/langgenius/dify-plugins
+- Update existing runtimes/tools or fix plugin bugs in: https://github.com/langgenius/dify-official-plugins
+- Link an existing issue or open a new issue in the PR description.
