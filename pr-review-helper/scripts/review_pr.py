@@ -515,6 +515,71 @@ def pr_content_language_result(
     return CheckResult("PR content language", True, detail)
 
 
+REQUIRED_FILES = ("manifest.yaml",)
+EXPECTED_FILES = ("README.md", "PRIVACY.md")
+PRIVACY_DOC_URL = (
+    "https://docs.dify.ai/en/develop-plugin/features-and-specs/plugin-types/"
+    "multilingual-readme#multilingual-readme"
+)
+
+
+def check_project_structure(plugin_dir: Path) -> List[CheckResult]:
+    """Quick structural review of the unpacked plugin before heavy checks."""
+    results: List[CheckResult] = []
+    missing: List[str] = []
+    present: List[str] = []
+
+    for name in REQUIRED_FILES:
+        if (plugin_dir / name).exists():
+            present.append(name)
+        else:
+            missing.append(name)
+
+    for name in EXPECTED_FILES:
+        if (plugin_dir / name).exists():
+            present.append(name)
+        else:
+            missing.append(name)
+
+    assets_dir = plugin_dir / "_assets"
+    has_assets = assets_dir.is_dir() and any(assets_dir.iterdir())
+
+    if missing:
+        results.append(CheckResult(
+            "Project structure",
+            False,
+            f"Missing files: {', '.join(missing)}. Present: {', '.join(present)}. _assets/: {'yes' if has_assets else 'no'}.",
+        ))
+    else:
+        results.append(CheckResult(
+            "Project structure",
+            True,
+            f"All expected files present: {', '.join(present)}. _assets/: {'yes' if has_assets else 'no'}.",
+        ))
+
+    return results
+
+
+def check_privacy_md(plugin_dir: Path) -> CheckResult:
+    """Verify PRIVACY.md exists in the plugin package."""
+    privacy_path = plugin_dir / "PRIVACY.md"
+    if not privacy_path.exists():
+        return CheckResult(
+            "PRIVACY.md",
+            False,
+            "PRIVACY.md not found in plugin package. "
+            "A privacy policy file is required for marketplace submission.",
+        )
+    content = privacy_path.read_text(encoding="utf-8", errors="ignore").strip()
+    if not content:
+        return CheckResult(
+            "PRIVACY.md",
+            False,
+            "PRIVACY.md is empty. Please provide a privacy policy.",
+        )
+    return CheckResult("PRIVACY.md", True, "PRIVACY.md exists and is non-empty.")
+
+
 def readme_language_result(
     plugin_dir: Path,
     max_cjk: int,
@@ -811,6 +876,9 @@ def main() -> int:
 
             plugin_dir = prepare_plugin_dir(pkg_path, temp_root)
 
+            # Quick structural review before heavy checks
+            results.extend(check_project_structure(plugin_dir))
+
             try:
                 manifest = parse_manifest(plugin_dir / "manifest.yaml")
                 results.append(check_manifest_author(manifest))
@@ -826,6 +894,7 @@ def main() -> int:
                     args.readme_max_cjk,
                 )
             )
+            results.append(check_privacy_md(plugin_dir))
 
             toolkit_dir: Path | None = None
             daemon_path: Path | None = None
