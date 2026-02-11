@@ -40,7 +40,25 @@ CONTRIBUTING_URL = (
 ISSUE_URL_RE = re.compile(
     r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/issues/(?P<number>\d+)(?:[/?#].*)?$"
 )
-CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+CJK_RE = re.compile(
+    r"["
+    r"\u2e80-\u2eff"  # CJK Radicals Supplement
+    r"\u3000-\u303f"  # CJK Symbols and Punctuation
+    r"\u3040-\u309f"  # Hiragana
+    r"\u30a0-\u30ff"  # Katakana
+    r"\u3100-\u312f"  # Bopomofo
+    r"\u3130-\u318f"  # Hangul Compatibility Jamo
+    r"\u3200-\u32ff"  # Enclosed CJK Letters and Months
+    r"\u3300-\u33ff"  # CJK Compatibility
+    r"\u3400-\u4dbf"  # CJK Unified Ideographs Extension A
+    r"\u4e00-\u9fff"  # CJK Unified Ideographs
+    r"\uac00-\ud7af"  # Hangul Syllables
+    r"\uf900-\ufaff"  # CJK Compatibility Ideographs
+    r"\ufe30-\ufe4f"  # CJK Compatibility Forms
+    r"\uff01-\uff60"  # Fullwidth Forms (，。？！etc.)
+    r"\uffe0-\uffef"  # Fullwidth Signs
+    r"]"
+)
 SELF_CHECKS_HEADER_RE = re.compile(r"^#{1,6}\s*Self Checks\s*$", re.IGNORECASE)
 ALLOWED_SELF_CHECKS_CJK_SNIPPETS = (
     "我已阅读并同意",
@@ -57,7 +75,11 @@ FEATURE_STORY_SECTION_RE = re.compile(
     r"(?is)#+\s*1\.\s*Is this request related to a challenge you're experiencing\?.*?\n\n(.*?)(?=\n#+\s*2\.|\Z)"
 )
 PLACEHOLDER_RE = re.compile(r"\b(tbd|todo|n/?a|none|same as title|no idea)\b", re.IGNORECASE)
-GENERIC_TITLE_RE = re.compile(r"^(bug|issue|help|question|error|problem)$", re.IGNORECASE)
+GENERIC_TITLE_RE = re.compile(
+    r"^(bug|issue|help|question|error|problem|bug report|help me|fix this|"
+    r"not working|doesn'?t work|please help|request|suggestion)$",
+    re.IGNORECASE,
+)
 DISRESPECTFUL_RE = re.compile(r"\b(idiot|stupid|dumb|fuck|shit|bitch)\b", re.IGNORECASE)
 NON_RESPONSE_VALUES = {"_no response_", "n/a", "na", "none"}
 BUG_MARKERS_RE = re.compile(
@@ -251,7 +273,7 @@ def looks_like_question(issue: IssueData) -> bool:
     if QUESTION_START_RE.match(title):
         return True
 
-    body_head = normalize_space("\n".join(issue.body.splitlines()[:8])).lower()
+    body_head = normalize_space("\n".join(issue.body.splitlines()[:10])).lower()
     markers = (
         "how to ",
         "what is ",
@@ -260,8 +282,68 @@ def looks_like_question(issue: IssueData) -> bool:
         "any idea",
         "anyone know",
         "need help",
+        "i want to know",
+        "please tell me",
+        "i'm wondering",
+        "i am wondering",
+        "is there a way",
+        "is it possible",
+        "does anyone",
+        "has anyone",
+        "please help",
+        "how can i",
+        "how do i",
+        "where can i",
     )
     return any(marker in body_head for marker in markers)
+
+
+SKIP_SECTION_HEADINGS = {"self checks", "self check"}
+
+
+def extract_template_sections(body: str) -> list[tuple[str, str]]:
+    """Extract (heading, content) pairs from markdown template sections."""
+    sections: list[tuple[str, str]] = []
+    current_heading = ""
+    current_lines: list[str] = []
+
+    for line in body.splitlines():
+        stripped = line.strip()
+        heading_match = re.match(r"^#{1,6}\s+(.*)", stripped)
+        if heading_match:
+            if current_heading:
+                sections.append((current_heading, "\n".join(current_lines).strip()))
+            current_heading = heading_match.group(1).strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_heading:
+        sections.append((current_heading, "\n".join(current_lines).strip()))
+
+    return sections
+
+
+def effective_content(body: str) -> str:
+    """Return meaningful content, stripping template headings, checkboxes, and _No response_ values."""
+    sections = extract_template_sections(body)
+    if not sections:
+        return normalize_space(body)
+
+    parts: list[str] = []
+    for heading, content in sections:
+        if heading.lower() in SKIP_SECTION_HEADINGS:
+            continue
+        content_clean = normalize_space(content)
+        if not content_clean or content_clean.lower() in NON_RESPONSE_VALUES:
+            continue
+        # Skip if content is only checkboxes
+        lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+        if lines and all(re.match(r"^[-*]\s*\[[ xX]\]", ln) for ln in lines):
+            continue
+        parts.append(content_clean)
+
+    return " ".join(parts) if parts else normalize_space(body)
 
 
 def unclear_reasons(issue: IssueData) -> list[str]:
@@ -269,6 +351,9 @@ def unclear_reasons(issue: IssueData) -> list[str]:
     title_clean = normalize_space(issue.title)
     body_clean = normalize_space(issue.body)
     body_lower = body_clean.lower()
+    # Use effective content (strips template boilerplate and _No response_ values)
+    content = effective_content(issue.body)
+    content_len = len(content)
 
     if len(title_clean) < 8 or GENERIC_TITLE_RE.fullmatch(title_clean):
         reasons.append("Title is too short or generic.")
@@ -277,11 +362,23 @@ def unclear_reasons(issue: IssueData) -> list[str]:
         reasons.append("Description is empty.")
         return reasons
 
-    if len(body_clean) < 60:
+    if content_len < 60:
         reasons.append("Description is too short to understand the task.")
 
     if PLACEHOLDER_RE.search(body_clean):
         reasons.append("Description contains placeholders instead of concrete details.")
+
+    # Check for template sections that are all _No response_ or empty
+    sections = extract_template_sections(issue.body)
+    if sections:
+        filled = sum(
+            1 for _, c in sections
+            if normalize_space(c).lower() not in NON_RESPONSE_VALUES
+            and normalize_space(c)
+            and c.lower() not in SKIP_SECTION_HEADINGS
+        )
+        if filled <= 1:
+            reasons.append("Almost all template sections are empty or marked _No response_.")
 
     detail_markers = (
         "steps",
@@ -296,7 +393,7 @@ def unclear_reasons(issue: IssueData) -> list[str]:
         "version",
     )
     marker_hits = sum(1 for marker in detail_markers if marker in body_lower)
-    if len(body_clean) < 180 and marker_hits < 2:
+    if content_len < 180 and marker_hits < 2:
         reasons.append("Description lacks enough concrete context for maintainers.")
 
     return dedupe(reasons)
@@ -429,61 +526,61 @@ def render_comment(issue: IssueData, category: str, reasons: list[str]) -> str:
         ).strip()
 
     if category == "unclear":
-        return textwrap.dedent(
-            f"""\
-            Hi @{author}, thanks for opening this issue.
-
-            ### Why this is being closed
-            We could not extract an actionable task from the current report.
-            {reason_lines if reason_lines else "- The issue content is not clear enough to triage."}
-
-            ### Next steps
-            Please open a new issue that includes:
-            - A clear problem statement
-            - Reproducible steps or concrete scope
-            - Expected result
-            - Actual result and logs/screenshots when available
-
-            Thanks for understanding and for helping keep the issue tracker actionable.
-            """
-        ).strip()
+        reasons_block = reason_lines or "- The issue content is not clear enough to triage."
+        return "\n".join([
+            f"Hi @{author}, thanks for opening this issue.",
+            "",
+            "### Why this is being closed",
+            "We could not extract an actionable task from the current report.",
+            "",
+            reasons_block,
+            "",
+            "### Next steps",
+            "Please open a new issue that includes:",
+            "- A clear problem statement",
+            "- Reproducible steps or concrete scope",
+            "- Expected result",
+            "- Actual result and logs/screenshots when available",
+            "",
+            "Thanks for understanding and for helping keep the issue tracker actionable.",
+        ])
 
     if category == "outdated-version":
-        return textwrap.dedent(
-            f"""\
-            Hi @{author}, thanks for opening this issue.
-
-            ### Why this is being closed
-            This report targets an outdated Dify version.
-            {reason_lines if reason_lines else f"- Reported Dify version is below v{MIN_DIFY_VERSION_STR}."}
-
-            ### Next steps
-            Please upgrade to the latest Dify release and retest. If the issue still occurs on the latest version, open a new issue with updated details.
-
-            Thanks for understanding and for supporting Dify.
-            """
-        ).strip()
+        reasons_block = reason_lines or f"- Reported Dify version is below v{MIN_DIFY_VERSION_STR}."
+        return "\n".join([
+            f"Hi @{author}, thanks for opening this issue.",
+            "",
+            "### Why this is being closed",
+            "This report targets an outdated Dify version.",
+            "",
+            reasons_block,
+            "",
+            "### Next steps",
+            "Please upgrade to the latest Dify release and retest. If the issue still occurs on the latest version, open a new issue with updated details.",
+            "",
+            "Thanks for understanding and for supporting Dify.",
+        ])
 
     if category == "core-standards":
-        return textwrap.dedent(
-            f"""\
-            Hi @{author}, thanks for opening this issue.
-
-            ### Why this is being closed
-            This report does not yet meet the required issue standard for `{issue.repo}`.
-            {reason_lines if reason_lines else "- Required issue details are missing."}
-
-            ### Relevant guidelines
-            - Bug report template: {BUG_TEMPLATE_URL}
-            - Code of Conduct / Language Policy: {CODE_OF_CONDUCT_URL}
-            - Contributing guide: {CONTRIBUTING_URL}
-
-            ### Next steps
-            Please open a new issue in English and include all required details from the bug template/contributing guide.
-
-            Thanks for understanding and for your contribution.
-            """
-        ).strip()
+        reasons_block = reason_lines or "- Required issue details are missing."
+        return "\n".join([
+            f"Hi @{author}, thanks for opening this issue.",
+            "",
+            "### Why this is being closed",
+            f"This report does not yet meet the required issue standard for `{issue.repo}`.",
+            "",
+            reasons_block,
+            "",
+            "### Relevant guidelines",
+            f"- Bug report template: {BUG_TEMPLATE_URL}",
+            f"- Code of Conduct / Language Policy: {CODE_OF_CONDUCT_URL}",
+            f"- Contributing guide: {CONTRIBUTING_URL}",
+            "",
+            "### Next steps",
+            "Please open a new issue in English and include all required details from the bug template/contributing guide.",
+            "",
+            "Thanks for understanding and for your contribution.",
+        ])
 
     return ""
 
@@ -504,7 +601,10 @@ def decide(issue: IssueData) -> Decision:
         )
 
     language_text = language_check_text(issue)
-    ratio = cjk_ratio(language_text)
+    combined_ratio = cjk_ratio(language_text)
+    # Also check body alone to catch cases where a long English title dilutes the ratio
+    body_ratio = cjk_ratio(sanitize_body_for_cjk(issue.body))
+    ratio = max(combined_ratio, body_ratio)
     has_cjk = ratio >= CJK_RATIO_THRESHOLD
     is_question = looks_like_question(issue)
 
