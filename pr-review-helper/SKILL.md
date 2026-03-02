@@ -10,7 +10,7 @@ Review plugin PRs for `langgenius/dify-plugins` and `langgenius/dify-official-pl
 ## Scope
 
 - **PR review only.** Skip if the task is issue moderation — use `dify-issue-moderator` instead.
-- Skip if the PR author association is `MEMBER` or `CONTRIBUTOR` in plugin repos.
+- **Do NOT skip PRs** from `MEMBER` or `CONTRIBUTOR` authors — review all PRs regardless of author association.
 
 ## Workflow
 
