@@ -78,7 +78,7 @@ def _print_table(title: str, columns: list[str], rows: list[list[str]]) -> None:
     print(f"### {title}")
     if not rows:
         empty_label = "PRs" if title.lower() == "prs" else title.lower()
-        print(f"No {empty_label} created today.")
+        print(f"No {empty_label} found in the given period.")
         return
     print("| " + " | ".join(columns) + " |")
     print("| " + " | ".join(["---"] * len(columns)) + " |")
@@ -86,12 +86,44 @@ def _print_table(title: str, columns: list[str], rows: list[list[str]]) -> None:
         print("| " + " | ".join(row) + " |")
 
 
+def _build_date_filter(date: str | None, since: str | None, until: str | None) -> str:
+    """Build the GitHub search `created:` filter string.
+
+    Priority:
+    1. If --since is given, use a range: created:SINCE..UNTIL (UNTIL defaults to today).
+    2. If --date is given, use a single day: created:DATE.
+    3. Otherwise default to today.
+    """
+    if since:
+        end = until or dt.date.today().isoformat()
+        return f"{since}..{end}"
+    return date or dt.date.today().isoformat()
+
+
+def _date_label(date_filter: str) -> str:
+    """Human-readable label for the header."""
+    if ".." in date_filter:
+        start, end = date_filter.split("..", 1)
+        return f"{start} to {end}"
+    return date_filter
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Daily triage report for Dify repos.")
     parser.add_argument(
         "--date",
-        default=dt.date.today().isoformat(),
-        help="Date to filter by (YYYY-MM-DD). Default: today (local).",
+        default=None,
+        help="Single date to filter by (YYYY-MM-DD). Default: today. Ignored when --since is used.",
+    )
+    parser.add_argument(
+        "--since",
+        default=None,
+        help="Start of date range (YYYY-MM-DD). Use with --until for a range.",
+    )
+    parser.add_argument(
+        "--until",
+        default=None,
+        help="End of date range (YYYY-MM-DD). Defaults to today when --since is set.",
     )
     parser.add_argument(
         "--repos",
@@ -112,11 +144,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    date_filter = _build_date_filter(args.date, args.since, args.until)
+    label = _date_label(date_filter)
     env = _clean_env(args.no_proxy)
 
-    print(f"# Dify Daily Triage ({args.date})")
+    print(f"# Dify Daily Triage ({label})")
     print()
-    print("Filters: open issues and open non-draft PRs created on the date above.")
+    print("Filters: open issues and open non-draft PRs created in the period above.")
     print()
 
     for repo in args.repos:
@@ -131,7 +165,7 @@ def main() -> int:
                 "--state",
                 "open",
                 "--search",
-                f"created:{args.date}",
+                f"created:{date_filter}",
                 "--limit",
                 str(args.limit),
                 "--json",
