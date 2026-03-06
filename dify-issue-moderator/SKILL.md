@@ -44,7 +44,12 @@ This policy applies equally to issues and PRs across all repos listed above.
 | Self Hosted (Source) deployment | All repos | Close — no source support |
 | Dify version below v1.10.0 | `langgenius/dify` | Close — ask to upgrade and retest |
 | Doesn't meet bug template standards | Core/webapp repos | Close — link to template |
-| Plugin issue filed in wrong repo | `langgenius/dify` | Close — redirect to `dify-official-plugins` |
+| Plugin-related issue filed in wrong repo | `langgenius/dify` | Close — redirect to `dify-plugins` or `dify-official-plugins` |
+
+For plugin routing in `langgenius/dify`:
+- Redirect **custom/community plugin**, plugin SDK, `.difypkg`, `manifest.yaml`, or plugin daemon issues to `langgenius/dify-plugins`.
+- Redirect **Dify-maintained model/tool/provider plugin** issues to `langgenius/dify-official-plugins`.
+- If the report is clearly plugin-related but the exact destination is ambiguous, close it in `langgenius/dify` and provide both repo links.
 
 ### Do NOT close feature requests that
 
@@ -80,8 +85,10 @@ Keep language respectful, neutral, and actionable.
 **Outdated version:**
 > Please upgrade to the latest release and retest before filing a new issue.
 
-**Plugin issue in wrong repo:**
-> Please file this at https://github.com/langgenius/dify-official-plugins/issues/new?template=bug_report.yml
+**Plugin-related issue in wrong repo:**
+> If this is about a custom/community plugin, plugin SDK, packaging, or plugin daemon, please open it at https://github.com/langgenius/dify-plugins/issues/new
+>
+> If this is about a Dify-maintained model/tool/provider plugin, please open it at https://github.com/langgenius/dify-official-plugins/issues/new
 
 **Security issue** (add verbatim under `### Next steps` in `langgenius/dify`):
 > First, if you believe this is a security-related issue, please submit it through a GitHub Advisory and please provide a complete proof of concept (PoC)

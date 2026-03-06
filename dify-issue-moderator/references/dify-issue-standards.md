@@ -46,12 +46,23 @@ For other authors, close with a polite comment when any of the following applies
      - `[FOR CHINESE USERS] 请务必使用英文提交 Issue，否则会被关闭。谢谢！:)`
 2. Question-style issue (not actionable bug/task report).
 3. Reported Dify version in the description is below `v1.10.0`. Ask the reporter to upgrade to the latest release and retest.
-4. Missing essential issue quality information.
+4. Issue is about plugin-specific code/package behavior rather than the core repository. Close and redirect:
+   - `langgenius/dify-plugins` for custom/community plugins, plugin SDK, `.difypkg`, `manifest.yaml`, plugin daemon, or plugin packaging/development issues.
+   - `langgenius/dify-official-plugins` for Dify-maintained model/tool/provider plugin issues.
+   - If it is clearly plugin-related but the destination is ambiguous, close in `langgenius/dify` and provide both repo links.
+5. Missing essential issue quality information.
 
 Do not close feature requests that match these accepted patterns (even if they do not contain explicit "use case" keywords):
 - Feature request template is filled with a substantive story under the "Is this request related to a challenge you're experiencing?" section (not `_No response_`).
 - Includes concrete example input/output or expected behavior.
 - Clearly asks to add/support/allow/enable/expose/visualize/customize a feature and provides a detailed description.
+
+### Plugin Routing Signals in `langgenius/dify`
+Use plugin routing when the issue clearly points to plugin/package scope instead of the core app. Common signals include:
+- Explicit mention of a plugin/provider together with package/runtime scope such as `model provider`, `tool provider`, `plugin install`, or `marketplace`
+- Plugin package/runtime files or terms such as `.difypkg`, `manifest.yaml`, `dify_plugin`
+- Plugin infrastructure terms such as `plugin daemon`
+- Plugin development or packaging language such as "custom plugin", "community plugin", "build plugin", "develop plugin"
 
 ### Essential Quality Information
 For bug-like reports, verify presence of:

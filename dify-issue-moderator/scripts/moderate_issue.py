@@ -24,6 +24,10 @@ MIN_DIFY_VERSION_STR = "1.10.0"
 
 FORUM_URL = "https://forum.dify.ai/"
 DISCORD_URL = "https://discord.com/invite/FngNHpbcY7"
+DIFY_PLUGINS_NEW_ISSUE_URL = "https://github.com/langgenius/dify-plugins/issues/new"
+DIFY_OFFICIAL_PLUGINS_NEW_ISSUE_URL = (
+    "https://github.com/langgenius/dify-official-plugins/issues/new"
+)
 BUG_TEMPLATE_URL = (
     "https://github.com/langgenius/dify/blob/"
     "3aecceff27c6b712628ad463c6e6ac15b8527ebe/.github/ISSUE_TEMPLATE/bug_report.yml"
@@ -85,6 +89,71 @@ NON_RESPONSE_VALUES = {"_no response_", "n/a", "na", "none"}
 BUG_MARKERS_RE = re.compile(
     r"\b(bug|error|exception|traceback|crash|fail(?:s|ure)?)\b",
     re.IGNORECASE,
+)
+PLUGIN_PREFILTER_RE = re.compile(
+    r"\bplugin(?:s)?\b|"
+    r"\bmarketplace\b|"
+    r"\bmodel provider(?:s)?\b|"
+    r"\btool provider(?:s)?\b|"
+    r"\bdify_plugin\b|"
+    r"\bmanifest\.ya?ml\b|"
+    r"\.difypkg\b|"
+    r"\bplugin[- ]daemon\b",
+    re.IGNORECASE,
+)
+PLUGIN_COMMUNITY_PATTERNS = (
+    (
+        re.compile(r"\bcustom plugin(?:s)?\b|\bcommunity plugin(?:s)?\b", re.IGNORECASE),
+        "Issue looks related to a custom/community plugin.",
+    ),
+    (
+        re.compile(r"\bplugin sdk\b|\bdify_plugin\b", re.IGNORECASE),
+        "Issue mentions the plugin SDK/runtime.",
+    ),
+    (
+        re.compile(r"\bmanifest\.ya?ml\b|\.difypkg\b", re.IGNORECASE),
+        "Issue mentions plugin package files.",
+    ),
+    (
+        re.compile(r"\bplugin[- ]daemon\b", re.IGNORECASE),
+        "Issue mentions the plugin daemon.",
+    ),
+    (
+        re.compile(r"\bplugin install(?:ation)?\b|\binstall(?:ing)? (?:a |the )?plugin\b", re.IGNORECASE),
+        "Issue is about plugin installation/package flow.",
+    ),
+    (
+        re.compile(r"\bdevelop(?:ing)? (?:a )?plugin\b|\bbuild(?:ing)? (?:a )?plugin\b", re.IGNORECASE),
+        "Issue is about developing or packaging a plugin.",
+    ),
+)
+PLUGIN_OFFICIAL_PATTERNS = (
+    (
+        re.compile(r"\bmodel provider(?:s)?\b", re.IGNORECASE),
+        "Issue looks related to a model provider plugin.",
+    ),
+    (
+        re.compile(r"\btool provider(?:s)?\b", re.IGNORECASE),
+        "Issue looks related to a tool provider plugin.",
+    ),
+    (
+        re.compile(r"\bofficial plugin(?:s)?\b|\bbuilt[- ]in plugin(?:s)?\b", re.IGNORECASE),
+        "Issue looks related to a Dify-maintained plugin.",
+    ),
+    (
+        re.compile(r"\bprovider plugin(?:s)?\b", re.IGNORECASE),
+        "Issue looks related to a provider plugin.",
+    ),
+)
+PLUGIN_GENERIC_PATTERNS = (
+    (
+        re.compile(r"\bplugin(?:s)?\b", re.IGNORECASE),
+        "Issue explicitly references a plugin.",
+    ),
+    (
+        re.compile(r"\bmarketplace\b", re.IGNORECASE),
+        "Issue references the plugin marketplace.",
+    ),
 )
 
 
@@ -443,6 +512,45 @@ def feature_request_quality(issue: IssueData) -> bool:
     return False
 
 
+def plugin_repo_redirect(issue: IssueData) -> tuple[str | None, list[str]]:
+    if issue.repo != CORE_REPO:
+        return None, []
+
+    text = f"{issue.title}\n{issue.body}"
+    if not PLUGIN_PREFILTER_RE.search(text):
+        return None, []
+
+    community_reasons = [
+        message
+        for pattern, message in PLUGIN_COMMUNITY_PATTERNS
+        if pattern.search(text)
+    ]
+    official_reasons = [
+        message
+        for pattern, message in PLUGIN_OFFICIAL_PATTERNS
+        if pattern.search(text)
+    ]
+    generic_reasons = [
+        message
+        for pattern, message in PLUGIN_GENERIC_PATTERNS
+        if pattern.search(text)
+    ]
+
+    if community_reasons and not official_reasons:
+        return "community", dedupe(community_reasons + generic_reasons)
+    if official_reasons and not community_reasons:
+        return "official", dedupe(official_reasons + generic_reasons)
+
+    specific_reasons = dedupe(community_reasons + official_reasons)
+    if specific_reasons:
+        reasons = dedupe(specific_reasons + generic_reasons)
+        reasons.append(
+            "This appears to belong in the plugin repositories rather than `langgenius/dify`."
+        )
+        return "either", dedupe(reasons)
+    return None, []
+
+
 def core_standard_violations(issue: IssueData) -> list[str]:
     violations: list[str] = []
     title_clean = normalize_space(issue.title)
@@ -561,6 +669,24 @@ def render_comment(issue: IssueData, category: str, reasons: list[str]) -> str:
             "Thanks for understanding and for supporting Dify.",
         ])
 
+    if category == "plugin-routing":
+        reasons_block = reason_lines or "- This report appears to be about plugin-specific code or packaging."
+        return "\n".join([
+            f"Hi @{author}, thanks for opening this issue.",
+            "",
+            "### Why this is being closed",
+            "This report appears to target plugin-specific behavior, which is tracked outside the `langgenius/dify` repository.",
+            "",
+            reasons_block,
+            "",
+            "### Next steps",
+            f"- If this is about a custom/community plugin, plugin SDK, packaging, or plugin daemon, please open it in: {DIFY_PLUGINS_NEW_ISSUE_URL}",
+            f"- If this is about a Dify-maintained model/tool/provider plugin, please open it in: {DIFY_OFFICIAL_PLUGINS_NEW_ISSUE_URL}",
+            "- Please include the plugin/provider name, Dify version, reproduction steps, and logs.",
+            "",
+            "Thanks for understanding and for helping keep issues in the correct repository.",
+        ])
+
     if category == "core-standards":
         reasons_block = reason_lines or "- Required issue details are missing."
         return "\n".join([
@@ -674,6 +800,15 @@ def decide(issue: IssueData) -> Decision:
         )
 
     if issue.repo == CORE_REPO:
+        plugin_route, plugin_reasons = plugin_repo_redirect(issue)
+        if plugin_route:
+            return Decision(
+                action="close",
+                category="plugin-routing",
+                reasons=plugin_reasons,
+                comment=render_comment(issue, "plugin-routing", plugin_reasons),
+            )
+
         reported_version = extract_dify_version(issue.body)
         if reported_version and reported_version < MIN_DIFY_VERSION:
             version_str = ".".join(str(part) for part in reported_version)
