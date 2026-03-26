@@ -163,7 +163,29 @@ def gh_json(pr_ref: str, repo: str, fields: str) -> dict:
 
 
 def checkout_pr(pr_ref: str, repo: str, workdir: Path) -> None:
-    run_cmd(["gh", "pr", "checkout", pr_ref, "-R", repo], cwd=workdir)
+    checkout_error: CheckFailed | None = None
+    try:
+        run_cmd(["gh", "pr", "checkout", pr_ref, "-R", repo], cwd=workdir)
+        return
+    except CheckFailed as exc:
+        checkout_error = exc
+
+    match = re.search(r"/pull/(\d+)", pr_ref) or re.fullmatch(r"(\d+)", pr_ref)
+    if not match:
+        raise checkout_error if checkout_error else CheckFailed(f"Unable to parse PR ref: {pr_ref}")
+
+    pr_number = match.group(1)
+    fallback_branch = f"pr-review-{pr_number}"
+    run_cmd(
+        [
+            "git",
+            "fetch",
+            "origin",
+            f"pull/{pr_number}/head:{fallback_branch}",
+        ],
+        cwd=workdir,
+    )
+    run_cmd(["git", "checkout", fallback_branch], cwd=workdir)
 
 
 def current_branch(workdir: Path) -> str:
@@ -263,21 +285,61 @@ def check_version_availability(
     )
 
     req = urllib.request.Request(url, method="GET")
+    code: int | None = None
+    body = ""
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             code = resp.getcode()
             body = resp.read().decode("utf-8", errors="ignore")
     except urllib.error.HTTPError as exc:
-        if exc.code != 200:
-            return CheckResult("Version check", True, f"version {version} is available.")
         code = exc.code
         body = exc.read().decode("utf-8", errors="ignore")
     except Exception as exc:
-        return CheckResult(
-            "Version check",
-            False,
-            f"failed to query marketplace API: {exc}",
+        ensure_command_exists("curl")
+        curl_result = subprocess.run(
+            [
+                "curl",
+                "-sS",
+                "-L",
+                "--retry",
+                "3",
+                "--retry-all-errors",
+                "-o",
+                "-",
+                "-w",
+                "\n%{http_code}",
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
         )
+        if curl_result.returncode != 0:
+            return CheckResult(
+                "Version check",
+                False,
+                f"failed to query marketplace API: {exc}; curl fallback failed: {curl_result.stderr.strip()}",
+            )
+
+        stdout = curl_result.stdout
+        if "\n" not in stdout:
+            return CheckResult(
+                "Version check",
+                False,
+                f"failed to query marketplace API: {exc}; curl fallback returned malformed response.",
+            )
+
+        body, code_text = stdout.rsplit("\n", 1)
+        try:
+            code = int(code_text.strip())
+        except ValueError:
+            return CheckResult(
+                "Version check",
+                False,
+                f"failed to query marketplace API: {exc}; curl fallback returned invalid status code {code_text!r}.",
+            )
 
     if code == 200:
         try:
@@ -290,6 +352,13 @@ def check_version_availability(
                 False,
                 f"version {version} already exists in marketplace.",
             )
+
+    if code is None:
+        return CheckResult(
+            "Version check",
+            False,
+            "failed to determine marketplace version availability.",
+        )
 
     return CheckResult("Version check", True, f"version {version} is available.")
 
@@ -431,6 +500,7 @@ def run_packaging_test(
     plugin_dir: Path,
     base_url: str,
     token: str,
+    temp_root: Path,
 ) -> CheckResult:
     run_cmd([str(daemon_path), "version"])
     run_cmd(
@@ -448,6 +518,7 @@ def run_packaging_test(
             "-f",
             "--test",
         ],
+        cwd=temp_root,
         timeout=300,
     )
     return CheckResult("Packaging test", True, "packaging check passed.")
@@ -628,6 +699,51 @@ def markdown_results_table(results: List[CheckResult]) -> List[str]:
     return lines
 
 
+def required_action(result: CheckResult) -> str:
+    if result.ok:
+        return "None."
+
+    if result.name == "README language":
+        return (
+            "Remove Chinese characters from README.md and use the multilingual README pattern: "
+            f"{README_MULTILINGUAL_DOC_URL}"
+        )
+    if result.name == "PRIVACY.md":
+        return "Add a non-empty PRIVACY.md file to the plugin package."
+    if result.name == "Project structure":
+        return "Include all required files in the package: manifest.yaml, README.md, PRIVACY.md, and _assets/."
+    if result.name == "Manifest author":
+        return "Update manifest.yaml so author does not contain 'langgenius' or 'dify'."
+    if result.name == "Icon validation":
+        return "Provide a real custom icon file under _assets/ and reference it from manifest.yaml."
+    if result.name == "Version check":
+        return "Bump the plugin version to one that has not been published to the marketplace."
+    if result.name == "dify_plugin version":
+        return f"Use dify_plugin >= {MIN_DIFY_PLUGIN_VERSION} in the packaged plugin environment."
+    if result.name == "Dependency install":
+        return "Ensure requirements.txt installs successfully in a clean environment."
+    if result.name == "Install test":
+        return "Fix the plugin so test-plugin-install.py passes."
+    if result.name == "Packaging test":
+        return "Fix the plugin so upload-package.py --test passes."
+    if result.name == "PR content language":
+        return "Rewrite the PR title/body in English, excluding only the allowlisted bilingual notice."
+    return "Resolve the failing check and push an updated package."
+
+
+def markdown_review_table(results: List[CheckResult]) -> List[str]:
+    lines = [
+        "| Check | Status | Detail | Required action |",
+        "|---|---|---|---|",
+    ]
+    for result in results:
+        status = "✅ Pass" if result.ok else "❌ Fail"
+        detail = markdown_table_cell(result.detail)
+        action = markdown_table_cell(required_action(result))
+        lines.append(f"| `{result.name}` | {status} | {detail} | {action} |")
+    return lines
+
+
 def collect_failures(results: List[CheckResult]) -> List[CheckResult]:
     return [r for r in results if not r.ok]
 
@@ -641,7 +757,7 @@ def build_review_body(results: List[CheckResult], approve_message: str) -> Tuple
             "> **Decision:** Approve",
             "",
             "### Local Check Results",
-            *markdown_results_table(results),
+            *markdown_review_table(results),
         ]
         return True, "\n".join(lines)
 
@@ -651,15 +767,15 @@ def build_review_body(results: List[CheckResult], approve_message: str) -> Tuple
         "> **Decision:** Request changes",
         "",
         "### Failed Checks",
-        *markdown_results_table(failures),
+        *markdown_review_table(failures),
         "",
         "### Full Check Results",
-        *markdown_results_table(results),
+        *markdown_review_table(results),
         "",
-        "### Required Fixes",
+        "### Next steps",
     ]
     for result in failures:
-        lines.append(f"- **{result.name}**: {result.detail}")
+        lines.append(f"- **{result.name}**: {required_action(result)}")
     lines.extend(
         [
             "",
@@ -704,25 +820,74 @@ def prepare_plugin_dir(pkg_path: Path, temp_root: Path) -> Path:
 
 def clone_toolkit(temp_root: Path) -> Path:
     toolkit_dir = temp_root / "toolkit"
-    run_cmd(["gh", "repo", "clone", "langgenius/dify-marketplace-toolkit", str(toolkit_dir)])
+    try:
+        run_cmd(["gh", "repo", "clone", "langgenius/dify-marketplace-toolkit", str(toolkit_dir)])
+    except CheckFailed:
+        run_cmd(
+            [
+                "git",
+                "clone",
+                "https://github.com/langgenius/dify-marketplace-toolkit.git",
+                str(toolkit_dir),
+            ]
+        )
     return toolkit_dir
 
 
 def download_daemon(temp_root: Path) -> Path:
     pattern = daemon_pattern_for_host()
-    run_cmd(
-        [
-            "gh",
-            "release",
-            "download",
-            "-R",
-            "langgenius/dify-plugin-daemon",
-            "--pattern",
-            pattern,
-            "--dir",
-            str(temp_root),
-        ]
-    )
+    gh_cmd = [
+        "gh",
+        "release",
+        "download",
+        "-R",
+        "langgenius/dify-plugin-daemon",
+        "--pattern",
+        pattern,
+        "--dir",
+        str(temp_root),
+    ]
+    download_error: CheckFailed | None = None
+    try:
+        run_cmd(gh_cmd)
+    except CheckFailed as exc:
+        download_error = exc
+        ensure_command_exists("curl")
+        release = run_cmd(
+            [
+                "gh",
+                "release",
+                "view",
+                "-R",
+                "langgenius/dify-plugin-daemon",
+                "--json",
+                "assets",
+            ]
+        )
+        try:
+            payload = json.loads(release.stdout)
+            assets = payload.get("assets", [])
+            asset_url = next(
+                str(asset["url"]) for asset in assets if asset.get("name") == pattern
+            )
+        except (json.JSONDecodeError, StopIteration, KeyError, TypeError) as parse_exc:
+            raise download_error from parse_exc
+
+        run_cmd(
+            [
+                "curl",
+                "-L",
+                "--fail",
+                "--retry",
+                "3",
+                "--retry-all-errors",
+                "-o",
+                str(temp_root / pattern),
+                asset_url,
+            ],
+            timeout=600,
+        )
+
     daemon = temp_root / pattern
     daemon.chmod(0o755)
     return daemon
@@ -931,6 +1096,7 @@ def main() -> int:
                             plugin_dir,
                             args.marketplace_base_url,
                             args.marketplace_token,
+                            temp_root,
                         )
                     )
                 except CheckFailed as exc:
